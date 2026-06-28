@@ -1,6 +1,10 @@
 #!/bin/sh
-# This script installs Ollama on Linux.
+# This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
+
+# Wrap script in main function so that a truncated partial download doesn't end
+# up executing half a script.
+main() {
 
 set -eu
 
@@ -27,14 +31,72 @@ require() {
     echo $MISSING
 }
 
-[ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
-
+OS="$(uname -s)"
 ARCH=$(uname -m)
 case "$ARCH" in
     x86_64) ARCH="amd64" ;;
     aarch64|arm64) ARCH="arm64" ;;
     *) error "Unsupported architecture: $ARCH" ;;
 esac
+
+VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
+
+###########################################
+# macOS
+###########################################
+
+if [ "$OS" = "Darwin" ]; then
+    NEEDS=$(require curl unzip)
+    if [ -n "$NEEDS" ]; then
+        status "ERROR: The following tools are required but missing:"
+        for NEED in $NEEDS; do
+            echo "  - $NEED"
+        done
+        exit 1
+    fi
+
+    DOWNLOAD_URL="https://fastgit.cc/github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip${VER_PARAM}"
+
+    if pgrep -x Ollama >/dev/null 2>&1; then
+        status "Stopping running Ollama instance..."
+        pkill -x Ollama 2>/dev/null || true
+        sleep 2
+    fi
+
+    if [ -d "/Applications/Ollama.app" ]; then
+        status "Removing existing Ollama installation..."
+        rm -rf "/Applications/Ollama.app"
+    fi
+
+    status "Downloading Ollama for macOS..."
+    curl --fail --show-error --location --progress-bar \
+        -o "$TEMP_DIR/Ollama-darwin.zip" "$DOWNLOAD_URL"
+
+    status "Installing Ollama to /Applications..."
+    unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
+    mv "$TEMP_DIR/Ollama.app" "/Applications/"
+
+    if [ ! -L "/usr/local/bin/ollama" ] || [ "$(readlink "/usr/local/bin/ollama")" != "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
+        status "Adding 'ollama' command to PATH (may require password)..."
+        mkdir -p "/usr/local/bin" 2>/dev/null || sudo mkdir -p "/usr/local/bin"
+        ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama" 2>/dev/null || \
+            sudo ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama"
+    fi
+
+    if [ -z "${OLLAMA_NO_START:-}" ]; then
+        status "Starting Ollama..."
+        open -a Ollama --args hidden
+    fi
+
+    status "Install complete. You can now run 'ollama'."
+    exit 0
+fi
+
+###########################################
+# Linux
+###########################################
+
+[ "$OS" = "Linux" ] || error 'This script is intended to run on Linux and macOS only.'
 
 IS_WSL2=false
 
@@ -44,8 +106,6 @@ case "$KERN" in
     *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
-
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
@@ -108,7 +168,7 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-download_and_extract "https://ghfast.top/https://github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+download_and_extract "https://fastgit.cc/github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
@@ -118,9 +178,9 @@ fi
 # Check for NVIDIA JetPack systems with additional downloads
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
-        download_and_extract "https://ghfast.top/https://github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
+        download_and_extract "https://fastgit.cc/github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        download_and_extract "https://ghfast.top/https://github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
+        download_and_extract "https://fastgit.cc/github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
     else
         warning "Unsupported JetPack version detected.  GPU may not be supported"
     fi
@@ -243,7 +303,7 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    download_and_extract "https://ghfast.top/https://github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
+    download_and_extract "https://fastgit.cc/github.com/ollama/ollama/releases/latest/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
 
     install_success
     status "AMD GPU ready."
@@ -390,3 +450,6 @@ fi
 
 status "NVIDIA GPU ready."
 install_success
+}
+
+main
